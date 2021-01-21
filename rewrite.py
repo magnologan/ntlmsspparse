@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
@@ -12,9 +13,9 @@ from collections import defaultdict
 REGEX = "(WWW-|Proxy-|)(Authenticate|Authorization): (NTLM|Negotiate)"
 
 if len(sys.argv) != 2:
-    print "Usage:\n\t%s <file>.pcap" % sys.argv[0]
-    print "\nIt's probably best to run:\n\ttshark -r <infile.pcap> 'ntlmssp.ntlmserverchallenge or ntlmssp.ntlmclientchallenge [and http]' -w <outfile.pcap>'"
-    print "where [and http] is optional but recommended"
+    print("Usage:\n\t%s <file>.pcap" % sys.argv[0])
+    print("\nIt's probably best to run:\n\ttshark -r <infile.pcap> 'ntlmssp.ntlmserverchallenge or ntlmssp.ntlmclientchallenge [and http]' -w <outfile.pcap>'")
+    print("where [and http] is optional but recommended")
     sys.exit(1)
 
 allpackets = rdpcap(sys.argv[1])
@@ -24,7 +25,7 @@ packets = [i for i in allpackets if i.haslayer("TCP") and i.haslayer("Raw") and
                 "Authorization: NTLM", #HTTP NTLMSSP_AUTH
                 "Proxy-Authenticate: Negotiate", #Proxy NTLMSSP_CHALLENGE
                 "Proxy-Authorization: Negotiate") #Proxy NTLMSSP_AUTH
-            if x in i["Raw"].load]]
+            if x in i["Raw"].load.decode('utf-8')]]
 acks = defaultdict(list)
 def store(i):
     acks[i["TCP"].ack].append(i["Raw"].load)
@@ -33,21 +34,21 @@ def store(i):
 svrchallenge = {}
 pairs = []
 for packet in packets: #Frankenstein's state machine and TCP reassembly
-    ntlmsspheader = [i for i in packet['Raw'].load.split('\r\n') if 
+    ntlmsspheader = [i for i in packet['Raw'].load.decode('utf-8').split('\r\n') if 
             re.match(
                 REGEX
                 , i)][0]
     if ntlmsspheader.startswith("WWW-Authenticate: NTLM ") or ntlmsspheader.startswith("Proxy-Authenticate: Negotiate"): #Type 2: Server challenge
         packets = acks[packet["TCP"].ack]
-        svrchallenge[packet["TCP"].ack] = ''.join(packets)
+        svrchallenge[packet["TCP"].ack] = b''.join(packets)
     if ntlmsspheader.startswith("Authorization: NTLM ") or ntlmsspheader.startswith("Proxy-Authorization: Negotiate"): #Type 3: Client Auth
-        if svrchallenge.has_key(packet["TCP"].seq):
+        if packet["TCP"].seq in svrchallenge:
             packets = acks[packet["TCP"].ack]
-            pairs.append([svrchallenge[packet["TCP"].seq], ''.join(packets)])
+            pairs.append([svrchallenge[packet["TCP"].seq], b''.join(packets)])
 
 for challenge, response in pairs:
-    challenge = [i for i in challenge.split('\r\n') if re.match(REGEX, i)][0]
-    response = [i for i in response.split('\r\n') if re.match(REGEX, i)][0]
+    challenge = [i for i in challenge.decode('utf-8').split('\r\n') if re.match(REGEX, i)][0]
+    response = [i for i in response.decode('utf-8').split('\r\n') if re.match(REGEX, i)][0]
     
     challenge = base64.b64decode(challenge.split(' ')[2])
     response = base64.b64decode(response.split(' ')[2])
@@ -56,10 +57,10 @@ for challenge, response in pairs:
     lmlen, lmmax, lmoff, ntlen, ntmax, ntoff, domlen, dommax, domoff, userlen, usermax, useroff = struct.unpack("12xhhihhihhihhi", response[:44])
     lmhash = binascii.b2a_hex(response[lmoff:lmoff+lmlen])
     nthash = binascii.b2a_hex(response[ntoff:ntoff+ntlen])
-    domain = response[domoff:domoff+domlen].replace("\0", "")
-    user = response[useroff:useroff+userlen].replace("\0", "")
+    domain = response[domoff:domoff+domlen].decode('utf-8').replace("\0", "")
+    user = response[useroff:useroff+userlen].decode('utf-8').replace("\0", "")
     if ntlen == 24: #NTLM
-        print user+"::"+domain+":"+lmhash+":"+nthash+":"+serverchallenge
+        print(user+"::"+domain+":"+lmhash.decode('utf-8')+":"+nthash.decode('utf-8')+":"+serverchallenge.decode('utf-8'))
     else: #NTLMv2
-        print user+"::"+domain+":"+serverchallenge+":"+nthash[:32]+":"+nthash[32:]
+        print(user+"::"+domain+":"+serverchallenge.decode('utf-8')+":"+nthash[:32].decode('utf-8')+":"+nthash[32:].decode('utf-8'))
 
